@@ -8,7 +8,7 @@
 
 ### 支持环境
 
-- iOS、iPadOS 和 macOS Safari，搭配 [Userscripts](https://github.com/quoid/userscripts)
+- iOS、iPadOS 和 macOS Safari，搭配 [Userscripts（App Store）](https://apps.apple.com/app/userscripts/id1463298887)
 - Chrome、Edge 和 Firefox，搭配 Tampermonkey 或 Violentmonkey
 - 其他支持 `@grant none` 与 `document-start` 的 Userscript 环境
 
@@ -29,7 +29,7 @@
 
 ### 安装
 
-1. 安装适合当前浏览器的脚本管理器。
+1. Safari 用户从 App Store 安装 [Userscripts](https://apps.apple.com/app/userscripts/id1463298887)；其他浏览器用户安装适合当前浏览器的脚本管理器。
 2. 打开 [`StayInBrowser.user.js`](https://raw.githubusercontent.com/Or1a/StayInBrowser/main/StayInBrowser.user.js)。
 3. 在脚本管理器中确认安装；Safari Userscripts 用户也可以将文件保存到所选脚本目录。
 4. 授予脚本管理器访问目标网站的权限。
@@ -98,7 +98,7 @@ A cross-browser Userscript that blocks websites from launching external apps and
 
 ### Supported environments
 
-- Safari on iOS, iPadOS, and macOS with [Userscripts](https://github.com/quoid/userscripts)
+- Safari on iOS, iPadOS, and macOS with [Userscripts (App Store)](https://apps.apple.com/app/userscripts/id1463298887)
 - Chrome, Edge, and Firefox with Tampermonkey or Violentmonkey
 - Other Userscript environments supporting `@grant none` and `document-start`
 
@@ -119,7 +119,7 @@ Page-injection behavior varies between script managers and may affect some inter
 
 ### Installation
 
-1. Install a script manager for your browser.
+1. Safari users can install [Userscripts from the App Store](https://apps.apple.com/app/userscripts/id1463298887); users of other browsers should install a compatible script manager.
 2. Open [`StayInBrowser.user.js`](https://raw.githubusercontent.com/Or1a/StayInBrowser/main/StayInBrowser.user.js).
 3. Confirm the installation in your script manager. Safari Userscripts users can also save the file in their selected scripts directory.
 4. Allow the script manager to access the sites you want to protect.
