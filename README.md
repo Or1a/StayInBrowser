@@ -20,7 +20,7 @@
 - 拦截点击、触摸和键盘触发的 App 唤醒
 - 拦截常见网页导航 API、动态链接、表单、iframe、`object` 和 `embed`
 - 识别没有 `href`、仅靠 JavaScript 点击处理器唤醒 App 的控件
-- 对跨域网页导航使用轻量的顶层网页中继
+- 对跨域网页导航使用隔离中转，并将目标作为顶层网页加载
 - 监控普通 DOM、Shadow DOM 和同源 iframe 中动态生成的导航入口
 - 默认阻止网页注册新的自定义协议处理器
 - 对常见移动端网页链接进行保守规范化
@@ -84,7 +84,7 @@ StayInBrowser.getStats()
 
 ### 重要限制
 
-Userscript 可以阻止网页层面的点击、自定义 URL Scheme、JavaScript 唤醒和部分可取消的客户端重定向，并通过轻量中继处理捕获到的跨域网页导航。但它无法控制操作系统或浏览器在页面 JavaScript 执行范围之外处理的 Universal Link、Intent、浏览器界面操作、服务器端重定向或系统级 App Banner，因此不能保证 100% 阻止所有 App 唤醒。
+Userscript 可以阻止网页层面的点击、自定义 URL Scheme、JavaScript 唤醒和部分可取消的客户端重定向，并通过隔离中转处理捕获到的跨域网页导航。但它无法控制操作系统或浏览器在页面 JavaScript 执行范围之外处理的 Universal Link、Intent、浏览器界面操作、服务器端重定向或系统级 App Banner，因此不能保证 100% 阻止所有 App 唤醒。
 
 多数浏览器不允许网页脚本可靠地重新定义 `window.location`、`location.href` 或 `top.location` 等原生属性。如果脚本无法从点击控件推断目标，也无法取消随后发生的导航，直接赋值触发的跳转仍可能绕过拦截。
 
@@ -110,7 +110,7 @@ Page-injection behavior varies between script managers and may affect some inter
 - Blocks app-launch attempts triggered by click, touch, and keyboard events
 - Intercepts common navigation APIs, dynamic links, forms, iframes, `object`, and `embed`
 - Detects app-launch controls that have no `href` and rely on JavaScript click handlers
-- Uses a lightweight top-level web relay for cross-origin navigation
+- Uses an isolated relay for cross-origin navigation and loads the destination as a top-level page
 - Monitors navigation targets created in the DOM, Shadow DOM, and same-origin iframes
 - Blocks new custom protocol-handler registration by default
 - Conservatively normalizes common mobile web links
@@ -156,6 +156,6 @@ Both `interceptedWindowOpen` and `blockedCustomSchemes` should increase.
 
 ### Important limitations
 
-This Userscript can block page-level clicks, custom URL schemes, JavaScript app-launch attempts, and some cancelable client redirects. It also relays captured cross-origin web navigation through a lightweight top-level page. It cannot control Universal Links, intents, browser UI actions, server-side redirects, or system app banners handled outside the page’s JavaScript context, so it cannot guarantee that every app launch will be blocked.
+This Userscript can block page-level clicks, custom URL schemes, JavaScript app-launch attempts, and some cancelable client redirects. It also handles captured cross-origin web navigation through an isolated relay. It cannot control Universal Links, intents, browser UI actions, server-side redirects, or system app banners handled outside the page’s JavaScript context, so it cannot guarantee that every app launch will be blocked.
 
 Browsers normally prevent page scripts from reliably redefining native properties such as `window.location`, `location.href`, and `top.location`. A direct assignment may still bypass interception when the script cannot infer its target from the clicked control or cancel the resulting navigation.

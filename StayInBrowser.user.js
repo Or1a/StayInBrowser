@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StayInBrowser
 // @namespace    local.stay-in-safari
-// @version      1.0.1
+// @version      1.0.3
 // @description  Block websites from launching external apps and keep navigation in your browser
 // @match        http://*/*
 // @match        https://*/*
@@ -14,12 +14,17 @@
 // ==/UserScript==
 
 // Changelog
+// 1.0.3 - Routed cross-origin navigation through an isolated subframe so WebKit disables App Link handling.
+// 1.0.2 - Waited out forwarded user activation before cross-origin navigation and added version diagnostics.
 // 1.0.1 - Blocked client-redirect app launches, replaced embedded isolation with a lightweight web relay, and reduced DOM scanning.
 // 1.0.0 - Stable release with stronger navigation isolation and multi-tab optimizations.
 // 0.1.5 - Improved navigation handling and reduced foreground/background overhead.
 
 (function () {
   'use strict';
+
+  const VERSION = '1.0.3';
+  const RELAY_MODE = 'isolated-subframe';
 
   const CONFIG = {
     enabled: true,
@@ -60,6 +65,7 @@
     relayedNavigations: 0,
   };
   const originals = Object.create(null);
+  originals.appendChild = Node.prototype.appendChild;
   const WEB_EVENTS = new Set(['click', 'auxclick']);
   const IS_TOP_LEVEL = (() => {
     try { return window.top === window; } catch (_) { return false; }
@@ -343,30 +349,46 @@
   }
 
   function relayNavigation(url, replace) {
-    if (!shouldRelayNavigation(url) || typeof Blob !== 'function' ||
-        !URL || typeof URL.createObjectURL !== 'function') return false;
+    if (!shouldRelayNavigation(url) || !document.documentElement ||
+        typeof HTMLIFrameElement !== 'function') return false;
 
-    // A fresh top-level document breaks the transient tap activation before the
-    // destination is requested. The target still loads normally with first-party
-    // cookies; unlike an iframe, it is not reported to the site as an embedded page.
+    // WebKit propagates a main document's external-URL policy through client
+    // redirects, even after transient activation expires. A sandboxed srcdoc
+    // document has an opaque origin, so navigation initiated from that subframe
+    // is assigned ShouldNotAllow for App Links. It targets the top frame, which
+    // means the destination still becomes a normal first-party top-level page.
     const targetLiteral = JSON.stringify(url.href).replace(/</g, '\\u003c');
     const relayDocument = [
       '<!doctype html><meta charset="utf-8">',
-      '<meta name="referrer" content="strict-origin-when-cross-origin">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
-      '<title>Opening webpage</title>',
-      '<style>html{font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:#555}',
-      'body{display:grid;min-height:100vh;place-items:center;margin:0}</style>',
-      '<p>Opening webpage…</p>',
-      '<script>setTimeout(function(){location.replace(' + targetLiteral + ')},0)</scr' + 'ipt>',
+      '<meta name="referrer" content="no-referrer">',
+      '<script>setTimeout(function(){top.location.href=' + targetLiteral + '},0)</scr' + 'ipt>',
     ].join('');
-    const relayURL = URL.createObjectURL(new Blob([relayDocument], { type: 'text/html' }));
-    stats.relayedNavigations++;
-    log('relayed cross-origin web navigation', {
-      originalURL: url.href, rewrittenURL: url.href, source: 'top-level web relay',
-    });
-    nativeNavigate(parseURL(relayURL), replace);
-    return true;
+
+    const relay = document.createElement('iframe');
+    relay.hidden = true;
+    relay.setAttribute('aria-hidden', 'true');
+    relay.setAttribute('sandbox', 'allow-scripts allow-top-navigation');
+    relay.setAttribute('style', 'display:none!important;width:0!important;height:0!important');
+    relay.srcdoc = relayDocument;
+
+    internalNavigation = true;
+    try {
+      originals.appendChild.call(document.documentElement, relay);
+      stats.relayedNavigations++;
+      log('relayed cross-origin web navigation', {
+        originalURL: url.href, rewrittenURL: url.href, source: RELAY_MODE,
+      });
+      // The page normally unloads. If CSP or a browser policy blocks srcdoc,
+      // restore interception without falling back to an unsafe direct redirect.
+      setTimeout(() => {
+        internalNavigation = false;
+        if (relay.isConnected) relay.remove();
+      }, 4000);
+      return true;
+    } catch (_) {
+      internalNavigation = false;
+      return false;
+    }
   }
 
   function navigateWeb(url, replace) {
@@ -938,7 +960,13 @@
   }
 
   const diagnostic = Object.freeze({
-    getStats() { return Object.assign({}, stats, { enabled }); },
+    getStats() {
+      return Object.assign({}, stats, {
+        version: VERSION,
+        enabled,
+        relayMode: RELAY_MODE,
+      });
+    },
     resetStats() {
       for (const key of Object.keys(stats)) stats[key] = 0;
       return this.getStats();
