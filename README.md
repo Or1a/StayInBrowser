@@ -4,7 +4,7 @@
 
 ## 中文
 
-一个跨浏览器 Userscript，用于阻止网页唤醒或打开外部 App，并尽量将网页导航保留在当前浏览器中。
+StayInBrowser 是一个跨浏览器的 Userscript，用于阻止网页唤醒或打开外部 App，并将网页导航保留在当前浏览器中。
 
 ### 支持环境
 
@@ -29,7 +29,7 @@
 
 ### 安装
 
-1. Safari 用户从 App Store 安装 [Userscripts](https://apps.apple.com/app/userscripts/id1463298887)；其他浏览器用户安装适合当前浏览器的脚本管理器。
+1. 如使用 Safari， 请从 App Store 安装 [Userscripts](https://apps.apple.com/app/userscripts/id1463298887)；其他浏览器用户安装适合当前浏览器的脚本管理器。
 2. 打开 [`StayInBrowser.user.js`](https://raw.githubusercontent.com/Or1a/StayInBrowser/main/StayInBrowser.user.js)。
 3. 在脚本管理器中确认安装；Safari Userscripts 用户也可以将文件保存到所选脚本目录。
 4. 授予脚本管理器访问目标网站的权限。
@@ -88,13 +88,13 @@ Userscript 可以阻止网页层面的点击、自定义 URL Scheme、JavaScript
 
 多数浏览器不允许网页脚本可靠地重新定义 `window.location`、`location.href` 或 `top.location` 等原生属性。如果脚本无法从点击控件推断目标，也无法取消随后发生的导航，直接赋值触发的跳转仍可能绕过拦截。
 
-若登录、支付或其他流程必须使用新窗口，可将 `forceSameTab` 改为 `false`，或临时运行 `StayInBrowser.disable()`。
+若登录、支付或其他流程必须使用新窗口，可将 `forceSameTab` 改为 `false`，或临时运行 `StayInBrowser.disable()` 。
 
 ---
 
 ## English
 
-A cross-browser Userscript that blocks websites from launching external apps and tries to keep web navigation in the current browser.
+StayInBrowser is a cross-browser Userscript that blocks websites from launching external apps and tries to keep web navigation in the current browser.
 
 ### Supported environments
 
