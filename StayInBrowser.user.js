@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StayInBrowser
 // @namespace    local.stay-in-safari
-// @version      1.0.0
+// @version      1.0.1
 // @description  Block websites from launching external apps and keep navigation in your browser
 // @match        http://*/*
 // @match        https://*/*
@@ -14,6 +14,7 @@
 // ==/UserScript==
 
 // Changelog
+// 1.0.1 - Blocked client-redirect app launches, replaced embedded isolation with a lightweight web relay, and reduced DOM scanning.
 // 1.0.0 - Stable release with stronger navigation isolation and multi-tab optimizations.
 // 0.1.5 - Improved navigation handling and reduced foreground/background overhead.
 
@@ -29,7 +30,7 @@
     blockUniversalLinks: true,
     blockProtocolHandlerRegistration: true,
     applySiteCompatibilityHints: true,
-    isolateHighRiskNavigation: true,
+    relayCrossOriginNavigation: true,
     showBlockedToast: false,
     allowedSchemes: ['http:', 'https:'],
     allowedHosts: [],
@@ -55,7 +56,8 @@
     interceptedNavigations: 0,
     blockedAppControls: 0,
     appliedCompatibilityHints: 0,
-    isolatedWebViewsOpened: 0,
+    inferredWebTargets: 0,
+    relayedNavigations: 0,
   };
   const originals = Object.create(null);
   const WEB_EVENTS = new Set(['click', 'auxclick']);
@@ -64,14 +66,7 @@
   })();
   const CLICK_SELECTOR = [
     'a[href]', 'area[href]', '[data-url]', '[data-href]', '[data-link]',
-    '[data-app-url]', '[data-scheme]', '[onclick]',
-  ].join(',');
-  const APP_CONTROL_SCAN_SELECTOR = [
-    'm-open-app', 'wx-open-launch-app',
-    '[class*="open-app"]', '[class*="openapp"]', '[class*="launch-app"]',
-    '[class*="call-app"]', '[class*="wake-app"]', '[class*="app-banner"]',
-    '[class*="open-in-app"]', '[id*="open-app"]', '[id*="openapp"]',
-    '[data-action*="open-app"]', '[data-action*="openapp"]',
+    '[data-app-url]', '[data-scheme]', '[data-stayinbrowser-blocked-href]', '[onclick]',
   ].join(',');
   const BILI_HOSTS = new Set([
     'bilibili.com', 'www.bilibili.com', 'm.bilibili.com',
@@ -83,6 +78,15 @@
     'search.bilibili.com', 'space.bilibili.com', 't.bilibili.com',
   ]);
   const BILI_NO_APP_HINT = 'edge_cebianlan';
+  const BILI_PROFILE_LINK_SELECTOR = [
+    'a[href*="space.bilibili.com/"]',
+    'a[href*="m.bilibili.com/space/"]',
+  ].join(',');
+  const PROFILE_ID_ATTRIBUTES = [
+    'data-usercard-mid', 'data-user-card-mid', 'data-member-id',
+    'data-user-id', 'data-userid', 'data-mid', 'data-uid',
+  ];
+  const PROFILE_CONTROL_RE = /(?:^|[-_\s])(avatar|face|author|owner|creator|member|user|up)(?:$|[-_\s])/i;
   const APP_WORD_RE = /(?:^|[-_\s])(open-?app|launch-?app|call-?app|wake-?app|awaken|download-?app|app-?banner|app-?link|open-?in-?app)(?:$|[-_\s])/i;
   const NAVIGATION_SINK_ATTRIBUTES = new Set([
     'href', 'src', 'data', 'action', 'formaction',
@@ -91,7 +95,6 @@
   const SAFE_SPECIAL = new Set(['about:', 'blob:']);
   let enabled = !!CONFIG.enabled;
   let internalNavigation = false;
-  let isolatedWebView = null;
 
   function log(message, detail) {
     if (!CONFIG.debug) return;
@@ -329,95 +332,47 @@
     }
   }
 
-  function shouldOpenIsolatedWebView(url) {
-    if (!CONFIG.blockUniversalLinks || !CONFIG.isolateHighRiskNavigation || !url) return false;
+  function shouldRelayNavigation(url) {
+    if (!CONFIG.blockUniversalLinks || !CONFIG.relayCrossOriginNavigation || !url) return false;
     if (!IS_TOP_LEVEL) return false;
     const current = parseURL(location.href);
-    if (!current || current.protocol !== 'https:' || url.protocol !== 'https:') return false;
-    const currentHost = current.hostname.toLowerCase();
-    const targetHost = url.hostname.toLowerCase();
-    const isIsolatedTarget =
-      (targetHost === 'space.bilibili.com' && /^\/\d+(?:\/|$)/.test(url.pathname)) ||
-      (targetHost === 'm.bilibili.com' && /^\/space\/\d+(?:\/|$)/.test(url.pathname));
-    return isIsolatedTarget && currentHost !== targetHost && BILI_HOSTS.has(currentHost);
+    if (!current || !/^https?:$/.test(current.protocol) || !/^https?:$/.test(url.protocol)) {
+      return false;
+    }
+    return current.origin !== url.origin;
   }
 
-  function closeIsolatedWebView() {
-    if (!isolatedWebView) return;
-    try { isolatedWebView.remove(); } catch (_) {}
-    isolatedWebView = null;
-  }
+  function relayNavigation(url, replace) {
+    if (!shouldRelayNavigation(url) || typeof Blob !== 'function' ||
+        !URL || typeof URL.createObjectURL !== 'function') return false;
 
-  function openIsolatedWebView(url) {
-    if (!shouldOpenIsolatedWebView(url) || !document.documentElement) return false;
-    closeIsolatedWebView();
-
-    const overlay = document.createElement('div');
-    overlay.id = 'stayinbrowser-isolated-webview';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-label', 'Isolated web view');
-    overlay.setAttribute('style', [
-      'position:fixed', 'inset:0', 'z-index:2147483647',
-      'display:flex', 'flex-direction:column', 'background:#fff',
-      'padding-top:env(safe-area-inset-top)',
-    ].join(';'));
-
-    const toolbar = document.createElement('div');
-    toolbar.setAttribute('style', [
-      'display:flex', 'align-items:center', 'justify-content:space-between',
-      'min-height:44px', 'padding:0 12px', 'flex:0 0 auto',
-      'border-bottom:1px solid rgba(0,0,0,.12)', 'background:#fff',
-      'color:#111', 'font:14px -apple-system,BlinkMacSystemFont,sans-serif',
-    ].join(';'));
-
-    const title = document.createElement('span');
-    title.textContent = '网页 / Web';
-
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.textContent = '关闭 / Close';
-    close.setAttribute('style', [
-      'border:0', 'padding:8px', 'background:transparent', 'color:#1677ff',
-      'font:14px -apple-system,BlinkMacSystemFont,sans-serif', 'cursor:pointer',
-    ].join(';'));
-    close.addEventListener('click', closeIsolatedWebView, { capture: true });
-
-    const frame = document.createElement('iframe');
-    frame.setAttribute('title', 'Isolated web view');
-    frame.setAttribute('sandbox', [
-      'allow-downloads', 'allow-forms', 'allow-modals',
-      'allow-presentation', 'allow-same-origin', 'allow-scripts',
-    ].join(' '));
-    frame.setAttribute('allow', 'encrypted-media; fullscreen; picture-in-picture');
-    frame.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-    frame.setAttribute('style', 'display:block;width:100%;height:100%;flex:1 1 auto;border:0;background:#fff');
-    frame.setAttribute('src', url.href);
-
-    toolbar.appendChild(title);
-    toolbar.appendChild(close);
-    overlay.appendChild(toolbar);
-    overlay.appendChild(frame);
-    document.documentElement.appendChild(overlay);
-    isolatedWebView = overlay;
-    stats.isolatedWebViewsOpened++;
-    log('opened navigation in sandboxed web view', {
-      originalURL: url.href, rewrittenURL: url.href, source: 'isolated web view',
+    // A fresh top-level document breaks the transient tap activation before the
+    // destination is requested. The target still loads normally with first-party
+    // cookies; unlike an iframe, it is not reported to the site as an embedded page.
+    const targetLiteral = JSON.stringify(url.href).replace(/</g, '\\u003c');
+    const relayDocument = [
+      '<!doctype html><meta charset="utf-8">',
+      '<meta name="referrer" content="strict-origin-when-cross-origin">',
+      '<meta name="viewport" content="width=device-width,initial-scale=1">',
+      '<title>Opening webpage</title>',
+      '<style>html{font:16px -apple-system,BlinkMacSystemFont,sans-serif;color:#555}',
+      'body{display:grid;min-height:100vh;place-items:center;margin:0}</style>',
+      '<p>Opening webpage…</p>',
+      '<script>setTimeout(function(){location.replace(' + targetLiteral + ')},0)</scr' + 'ipt>',
+    ].join('');
+    const relayURL = URL.createObjectURL(new Blob([relayDocument], { type: 'text/html' }));
+    stats.relayedNavigations++;
+    log('relayed cross-origin web navigation', {
+      originalURL: url.href, rewrittenURL: url.href, source: 'top-level web relay',
     });
+    nativeNavigate(parseURL(relayURL), replace);
     return true;
   }
 
   function navigateWeb(url, replace) {
-    if (openIsolatedWebView(url)) return;
+    if (relayNavigation(url, replace)) return;
     nativeNavigate(url, replace);
   }
-
-  window.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && isolatedWebView) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      closeIsolatedWebView();
-    }
-  }, { capture: true, passive: false });
 
   function appControlCandidate(el) {
     return {
@@ -435,7 +390,10 @@
   function candidateFromClickable(el) {
     const values = [];
     if (el.matches('a[href],area[href]')) values.push(el.getAttribute('href'));
-    for (const name of ['data-app-url', 'data-scheme', 'data-url', 'data-href', 'data-link']) {
+    for (const name of [
+      'data-app-url', 'data-scheme', 'data-url', 'data-href', 'data-link',
+      'data-stayinbrowser-blocked-href',
+    ]) {
       if (el.hasAttribute(name)) values.push(el.getAttribute(name));
     }
     // Inline handlers are inspected only for literal scheme/URL strings.
@@ -452,12 +410,56 @@
     return primary ? { el, result: decision(primary, 'user-event') } : null;
   }
 
+  function profileCandidateFromElement(start) {
+    if (!(start instanceof Element)) return null;
+    const pageURL = parseURL(location.href);
+    if (!pageURL || !BILI_HOSTS.has(pageURL.hostname.toLowerCase())) return null;
+
+    let current = start;
+    for (let depth = 0; current && depth < 8; depth++, current = current.parentElement) {
+      if (current.matches(BILI_PROFILE_LINK_SELECTOR)) {
+        const result = decision(current.getAttribute('href') || current.href, 'profile control');
+        return { el: current, result };
+      }
+
+      for (const name of PROFILE_ID_ATTRIBUTES) {
+        const value = current.getAttribute(name);
+        if (!/^\d+$/.test(value || '')) continue;
+        stats.inferredWebTargets++;
+        return {
+          el: current,
+          result: decision('https://space.bilibili.com/' + value, 'inferred profile control'),
+        };
+      }
+
+      const identity = appControlIdentity(current);
+      if (!PROFILE_CONTROL_RE.test(identity) || current.childElementCount > 40) continue;
+      const link = current.querySelector(BILI_PROFILE_LINK_SELECTOR);
+      if (link) {
+        stats.inferredWebTargets++;
+        return { el: current, result: decision(link.getAttribute('href') || link.href, 'inferred profile control') };
+      }
+      const identified = current.querySelector(PROFILE_ID_ATTRIBUTES.map((name) => '[' + name + ']').join(','));
+      if (!identified) continue;
+      for (const name of PROFILE_ID_ATTRIBUTES) {
+        const value = identified.getAttribute(name);
+        if (!/^\d+$/.test(value || '')) continue;
+        stats.inferredWebTargets++;
+        return {
+          el: current,
+          result: decision('https://space.bilibili.com/' + value, 'inferred profile control'),
+        };
+      }
+    }
+    return null;
+  }
+
   function candidateFromElement(start) {
     if (!(start instanceof Element)) return null;
     const appControl = findAppControl(start);
     if (appControl) return appControlCandidate(appControl);
     const el = start.closest(CLICK_SELECTOR);
-    return el ? candidateFromClickable(el) : null;
+    return (el && candidateFromClickable(el)) || profileCandidateFromElement(start);
   }
 
   function candidateFromEvent(event) {
@@ -468,7 +470,12 @@
         if (looksLikeAppControl(item)) return appControlCandidate(item);
         if (!clickable && item.matches(CLICK_SELECTOR)) clickable = item;
       }
-      if (clickable) return candidateFromClickable(clickable);
+      if (clickable) {
+        const candidate = candidateFromClickable(clickable);
+        if (candidate) return candidate;
+      }
+      const profile = profileCandidateFromElement(event.target);
+      if (profile) return profile;
     }
     return candidateFromElement(event.target);
   }
@@ -557,7 +564,7 @@
           return;
         }
         const destination = result.rewritten || result.url;
-        if (result.action === 'web' && openIsolatedWebView(destination)) return;
+        if (result.action === 'web' && relayNavigation(destination, name === 'replace')) return;
         return original.call(this, (destination || {}).href || url);
       };
       try { location[name] = wrapped; } catch (_) {}
@@ -600,10 +607,10 @@
         return;
       }
       const destination = result.rewritten || result.url;
-      if (result.action === 'web' && shouldOpenIsolatedWebView(destination) && event.cancelable) {
+      if (result.action === 'web' && shouldRelayNavigation(destination) && event.cancelable) {
         event.preventDefault();
         stats.interceptedNavigations++;
-        openIsolatedWebView(destination);
+        relayNavigation(destination, event.navigationType === 'replace');
       }
     }, { capture: true });
   }
@@ -828,14 +835,13 @@
     }
 
     if (el instanceof HTMLIFrameElement) attachFrame(el);
-    hideObviousAppControl(el);
   }
 
   function sanitizeTree(root) {
     if (!root || typeof root.querySelectorAll !== 'function') return;
     if (root instanceof Element) sanitizeElement(root);
     const matches = root.querySelectorAll(
-      'a[href],area[href],iframe[src],iframe,form[action],button[formaction],input[formaction],object[data],embed[src],meta[http-equiv],' + APP_CONTROL_SCAN_SELECTOR
+      'a[href],area[href],iframe[src],iframe,form[action],button[formaction],input[formaction],object[data],embed[src],meta[http-equiv]'
     );
     for (const el of matches) sanitizeElement(el);
   }
@@ -860,20 +866,6 @@
     frame.dataset.stayinbrowserObserved = '1';
     frame.addEventListener('load', () => injectFrame(frame), { capture: true });
     injectFrame(frame);
-  }
-
-  function hideObviousAppControl(el) {
-    if (looksLikeAppControl(el)) {
-      el.setAttribute('data-stayinbrowser-app-control', 'hidden');
-    }
-  }
-
-  function installStyle() {
-    const style = document.createElement('style');
-    style.id = 'stayinbrowser-style';
-    style.textContent =
-      '[data-stayinbrowser-app-control="hidden"]{display:none!important}';
-    (document.head || document.documentElement).appendChild(style);
   }
 
   const observedRoots = new WeakSet();
@@ -934,7 +926,6 @@
 
   const startDOMProtection = () => {
     if (!IS_TOP_LEVEL || !document.documentElement) return;
-    installStyle();
     sanitizeTree(document.documentElement);
     observeRoot(document);
   };
