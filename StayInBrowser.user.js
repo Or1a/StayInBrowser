@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         StayInBrowser
 // @namespace    local.stay-in-safari
-// @version      0.1.5
+// @version      1.0.0
 // @description  Block websites from launching external apps and keep navigation in your browser
 // @match        http://*/*
 // @match        https://*/*
@@ -14,11 +14,8 @@
 // ==/UserScript==
 
 // Changelog
-// 0.1.5 - Add a sandboxed profile web view and reduce touch/background overhead.
-// 1.1.4 - Preserve login state by deferring Universal Links without a page relay.
-// 1.1.3 - Relay known cross-subdomain Universal Links through a fresh web page.
-// 1.1.2 - Expanded browser support and unified public identifiers.
-// 1.1.1 - Blocked app-launch controls without href attributes.
+// 1.0.0 - Stable release with stronger navigation isolation and multi-tab optimizations.
+// 0.1.5 - Improved navigation handling and reduced foreground/background overhead.
 
 (function () {
   'use strict';
@@ -32,7 +29,7 @@
     blockUniversalLinks: true,
     blockProtocolHandlerRegistration: true,
     applySiteCompatibilityHints: true,
-    openProfileLinksInWebView: true,
+    isolateHighRiskNavigation: true,
     showBlockedToast: false,
     allowedSchemes: ['http:', 'https:'],
     allowedHosts: [],
@@ -58,7 +55,7 @@
     interceptedNavigations: 0,
     blockedAppControls: 0,
     appliedCompatibilityHints: 0,
-    openedProfileWebViews: 0,
+    isolatedWebViewsOpened: 0,
   };
   const originals = Object.create(null);
   const WEB_EVENTS = new Set(['click', 'auxclick']);
@@ -94,7 +91,7 @@
   const SAFE_SPECIAL = new Set(['about:', 'blob:']);
   let enabled = !!CONFIG.enabled;
   let internalNavigation = false;
-  let profileWebView = null;
+  let isolatedWebView = null;
 
   function log(message, detail) {
     if (!CONFIG.debug) return;
@@ -332,33 +329,33 @@
     }
   }
 
-  function shouldOpenProfileWebView(url) {
-    if (!CONFIG.blockUniversalLinks || !CONFIG.openProfileLinksInWebView || !url) return false;
+  function shouldOpenIsolatedWebView(url) {
+    if (!CONFIG.blockUniversalLinks || !CONFIG.isolateHighRiskNavigation || !url) return false;
     if (!IS_TOP_LEVEL) return false;
     const current = parseURL(location.href);
     if (!current || current.protocol !== 'https:' || url.protocol !== 'https:') return false;
     const currentHost = current.hostname.toLowerCase();
     const targetHost = url.hostname.toLowerCase();
-    const isProfile =
+    const isIsolatedTarget =
       (targetHost === 'space.bilibili.com' && /^\/\d+(?:\/|$)/.test(url.pathname)) ||
       (targetHost === 'm.bilibili.com' && /^\/space\/\d+(?:\/|$)/.test(url.pathname));
-    return isProfile && currentHost !== targetHost && BILI_HOSTS.has(currentHost);
+    return isIsolatedTarget && currentHost !== targetHost && BILI_HOSTS.has(currentHost);
   }
 
-  function closeProfileWebView() {
-    if (!profileWebView) return;
-    try { profileWebView.remove(); } catch (_) {}
-    profileWebView = null;
+  function closeIsolatedWebView() {
+    if (!isolatedWebView) return;
+    try { isolatedWebView.remove(); } catch (_) {}
+    isolatedWebView = null;
   }
 
-  function openProfileWebView(url) {
-    if (!shouldOpenProfileWebView(url) || !document.documentElement) return false;
-    closeProfileWebView();
+  function openIsolatedWebView(url) {
+    if (!shouldOpenIsolatedWebView(url) || !document.documentElement) return false;
+    closeIsolatedWebView();
 
     const overlay = document.createElement('div');
-    overlay.id = 'stayinbrowser-profile-webview';
+    overlay.id = 'stayinbrowser-isolated-webview';
     overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-label', 'Profile web view');
+    overlay.setAttribute('aria-label', 'Isolated web view');
     overlay.setAttribute('style', [
       'position:fixed', 'inset:0', 'z-index:2147483647',
       'display:flex', 'flex-direction:column', 'background:#fff',
@@ -374,7 +371,7 @@
     ].join(';'));
 
     const title = document.createElement('span');
-    title.textContent = '个人主页 / Profile';
+    title.textContent = '网页 / Web';
 
     const close = document.createElement('button');
     close.type = 'button';
@@ -383,10 +380,10 @@
       'border:0', 'padding:8px', 'background:transparent', 'color:#1677ff',
       'font:14px -apple-system,BlinkMacSystemFont,sans-serif', 'cursor:pointer',
     ].join(';'));
-    close.addEventListener('click', closeProfileWebView, { capture: true });
+    close.addEventListener('click', closeIsolatedWebView, { capture: true });
 
     const frame = document.createElement('iframe');
-    frame.setAttribute('title', 'Profile web view');
+    frame.setAttribute('title', 'Isolated web view');
     frame.setAttribute('sandbox', [
       'allow-downloads', 'allow-forms', 'allow-modals',
       'allow-presentation', 'allow-same-origin', 'allow-scripts',
@@ -401,24 +398,24 @@
     overlay.appendChild(toolbar);
     overlay.appendChild(frame);
     document.documentElement.appendChild(overlay);
-    profileWebView = overlay;
-    stats.openedProfileWebViews++;
-    log('opened profile in sandboxed web view', {
-      originalURL: url.href, rewrittenURL: url.href, source: 'profile web view',
+    isolatedWebView = overlay;
+    stats.isolatedWebViewsOpened++;
+    log('opened navigation in sandboxed web view', {
+      originalURL: url.href, rewrittenURL: url.href, source: 'isolated web view',
     });
     return true;
   }
 
   function navigateWeb(url, replace) {
-    if (openProfileWebView(url)) return;
+    if (openIsolatedWebView(url)) return;
     nativeNavigate(url, replace);
   }
 
   window.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && profileWebView) {
+    if (event.key === 'Escape' && isolatedWebView) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      closeProfileWebView();
+      closeIsolatedWebView();
     }
   }, { capture: true, passive: false });
 
@@ -560,7 +557,7 @@
           return;
         }
         const destination = result.rewritten || result.url;
-        if (result.action === 'web' && openProfileWebView(destination)) return;
+        if (result.action === 'web' && openIsolatedWebView(destination)) return;
         return original.call(this, (destination || {}).href || url);
       };
       try { location[name] = wrapped; } catch (_) {}
@@ -603,10 +600,10 @@
         return;
       }
       const destination = result.rewritten || result.url;
-      if (result.action === 'web' && shouldOpenProfileWebView(destination) && event.cancelable) {
+      if (result.action === 'web' && shouldOpenIsolatedWebView(destination) && event.cancelable) {
         event.preventDefault();
         stats.interceptedNavigations++;
-        openProfileWebView(destination);
+        openIsolatedWebView(destination);
       }
     }, { capture: true });
   }

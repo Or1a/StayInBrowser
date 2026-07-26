@@ -20,7 +20,7 @@
 - 拦截点击、触摸、指针、鼠标和键盘触发的 App 唤醒
 - 拦截常见网页导航 API、动态链接、表单、iframe、`object` 和 `embed`
 - 识别没有 `href`、仅靠 JavaScript 点击处理器唤醒 App 的控件
-- 在沙盒网页视图中打开已知会唤醒 App 的个人主页链接
+- 对部分高风险网页导航使用沙盒网页视图
 - 监控普通 DOM、Shadow DOM 和同源 iframe 中动态生成的导航入口
 - 默认阻止网页注册新的自定义协议处理器
 - 对常见移动端网页链接进行保守规范化
@@ -49,7 +49,7 @@ const CONFIG = {
   blockUniversalLinks: true,
   blockProtocolHandlerRegistration: true,
   applySiteCompatibilityHints: true,
-  openProfileLinksInWebView: true,
+  isolateHighRiskNavigation: true,
   showBlockedToast: false,
   allowedSchemes: ['http:', 'https:'],
   allowedHosts: [],
@@ -110,7 +110,7 @@ Page-injection behavior varies between script managers and may affect some inter
 - Blocks app-launch attempts triggered by click, touch, pointer, mouse, and keyboard events
 - Intercepts common navigation APIs, dynamic links, forms, iframes, `object`, and `embed`
 - Detects app-launch controls that have no `href` and rely on JavaScript click handlers
-- Opens known app-launching profile links in a sandboxed web view
+- Uses a sandboxed web view for selected high-risk web navigation
 - Monitors navigation targets created in the DOM, Shadow DOM, and same-origin iframes
 - Blocks new custom protocol-handler registration by default
 - Conservatively normalizes common mobile web links
